@@ -122,18 +122,6 @@ class CompanyPortfolio:
         df.rename({df.columns[0]: 'date'}, inplace=True)
         self.daily_adjusted = df[['date', '5. adjusted close']]
 
-    def apply_dist_pdf_params(self, metric, columns='All'):
-        """Saves pfd params to the class"""
-
-        if columns == 'All':
-            working_columns = metric
-        else:
-            working_columns = columns
-        for m in working_columns:
-            if not m == 'fiscalDateEnding':
-                data = metric[m]['data']
-                metric[m]['pdf_params'] = get_gammadist_params(data, 250)
-
     def fix_investments(self):
         for r in list(range(0, len(self.balancesheet['investments']['data']))):
             inv = self.balancesheet['investments']['data'].iloc[r]
@@ -167,7 +155,6 @@ class CompanyPortfolio:
                 self.balancesheet['longTermDebt']['data'].iloc[r] = inv - short_term
                 self.balancesheet['totalNonCurrentLiabilities']['data'].iloc[r] = \
                     self.balancesheet['longTermDebt']['data'].iloc[r]
-
 
 def replace_none(data):
     """Replaces none values with zero.
@@ -248,19 +235,41 @@ def get_gammadist_params(data, sample_size):
 
     :return List of params in the order 'distribution,' 'scale,' then 'location.'"""
 
-    booted = bootstrap_mse(data, sample_size)
-    dist = getattr(sstats, 'gamma')
     try:
-        param = dist.fit(booted)
-        param = [p for p in param]
+        booted = bootstrap_mse(data, sample_size)
+        skew = sstats.skew(np.array(booted))
+        left_skew = False
+        xmin = min(booted)
+        xmax = max(booted)
+
+        if skew < -0.1:
+            booted = [-d for d in booted]
+            left_skew = True
+
+        ae, loce, scalee = sstats.skewnorm.fit(booted)
+        param = [ae, loce, scalee, left_skew, xmin, xmax]
     except ValueError as ve:
         print(f'{ve}... Continuing')
-        param = [None, None, None]
+        param = [None]*6
+    except:
+        print(f'Obscure Error... Continuing')
+        param = [None]*6
 
     return param
 
 
-def create_distribution_pdf(data, dist_size):
+def apply_dist_pdf_params(metric, columns=None):
+    """Saves pfd params to the class"""
+
+    if columns is None:
+        working_columns = metric
+    else:
+        working_columns = columns
+    for m in working_columns:
+        if not m == 'fiscalDateEnding':
+            data = metric[m]['data']
+            metric[m]['pdf_params'] = get_gammadist_params(data, 250)
+def create_distribution_pdf(dataset, dist_size, wilcox=True):
     """Gives paramters of a Gamma Distribution of the dataset that can be used to recreate an accurate sample.
     It's not necessary to use this right now.
     :param data: the series or list that work will be done on
@@ -269,22 +278,25 @@ def create_distribution_pdf(data, dist_size):
     :return List of datapoints of the recreated distribution and the wilcox p-value for comparing the data to the
     original"""
 
-    booted = bootstrap_mse(data, dist_size)
-    skew = sstats.skew(np.array(booted))
-    left_skew = False
+    params = dataset['pdf_params']
 
-    if skew < -0.1:
-        booted = [-d for d in booted]
-        left_skew = True
+    if not params[0] is None:
+        ae, loce, scalee, left_skew, xmin, xmax = params
+        x = np.linspace(xmin, xmax, 1000)
+        pdf = sstats.skewnorm.pdf(x, ae, loce, scalee)
+        dist = random.choices(x, weights=pdf / sum(pdf), k=dist_size)
 
-    ae, loce, scalee = sstats.skewnorm.fit(booted)
-    xmin, xmax = plt.xlim()
-    x = np.linspace(xmin, xmax, 1000)
-    pdf = sstats.skewnorm.pdf(x, ae, loce, scalee)
-    dist = random.choices(x, weights=pdf / sum(pdf), k=dist_size)
-    _, wilcox = sstats.mannwhitneyu(data, dist, method='auto')
+        if left_skew:
+            dist = [-d for d in dist]
 
-    if left_skew:
-        dist = [-d for d in dist]
+        if wilcox:
+            data = dataset['data']
+            data = find_percent_diff(data)
+            data = [d for d in data if not (math.isinf(d) or math.isnan(d))]
+            _, wilcox = sstats.mannwhitneyu(data, dist, method='auto')
+        else:
+            wilcox = None
+    else:
+        dist, wilcox = [0] * 2
 
-    return dist, wilcox
+        return dist, wilcox
