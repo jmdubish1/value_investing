@@ -156,6 +156,18 @@ class CompanyPortfolio:
                 self.balancesheet['totalNonCurrentLiabilities']['data'].iloc[r] = \
                     self.balancesheet['longTermDebt']['data'].iloc[r]
 
+    def apply_dist_pdf_params(self, metric, columns=None):
+        """Saves pfd params to the class"""
+
+        if columns is None:
+            working_columns = metric
+        else:
+            working_columns = columns
+        for m in working_columns:
+            if not m == 'fiscalDateEnding':
+                data = metric[m]['data']
+                metric[m]['pdf_params'] = get_gammadist_params(data, 250)
+
 def replace_none(data):
     """Replaces none values with zero.
     :param data: series of floats or int with possible nan values"""
@@ -257,23 +269,12 @@ def get_gammadist_params(data, sample_size):
 
     return param
 
-
-def apply_dist_pdf_params(metric, columns=None):
-    """Saves pfd params to the class"""
-
-    if columns is None:
-        working_columns = metric
-    else:
-        working_columns = columns
-    for m in working_columns:
-        if not m == 'fiscalDateEnding':
-            data = metric[m]['data']
-            metric[m]['pdf_params'] = get_gammadist_params(data, 250)
 def create_distribution_pdf(dataset, dist_size, wilcox=True):
     """Gives paramters of a Gamma Distribution of the dataset that can be used to recreate an accurate sample.
     It's not necessary to use this right now.
-    :param data: the series or list that work will be done on
+    :param dataset: the series or list that work will be done on
     :param dist_size: how many data points the final dist will have
+    :param wilcox: If True, returns a p-value that determines whether the bootstrapped distribution created by the pdf is statistically similar to the original.
 
     :return List of datapoints of the recreated distribution and the wilcox p-value for comparing the data to the
     original"""
@@ -297,6 +298,17 @@ def create_distribution_pdf(dataset, dist_size, wilcox=True):
         else:
             wilcox = None
     else:
-        dist, wilcox = [0] * 2
+        dist = [0] * 2
+        wilcox = None
 
-        return dist, wilcox
+    return [dist, wilcox]
+
+
+def project_metric(percent_dist, last_qtr):
+    """Returns a list/distribution of possible values for the next qtr
+    :param percent_dist: List of a distribution of possible changes in values
+    :param last_qtr: """
+    return [last_qtr*(1 + p) for p in percent_dist]
+
+
+
